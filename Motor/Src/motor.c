@@ -307,6 +307,12 @@ static float pid_compute(pid_state_t *pid, float target, float current)
  */
 void motor_A_pid(float target_rpm)
 {
+    if (target_rpm == 0.0f) {
+        pidA.integral = 0.0f;
+        pidA.prev_error = 0.0f;
+        motorA_pwm(0);
+        return;
+    }
     float output = pid_compute(&pidA, target_rpm, (float)motorA_speed_rpm);
     motorA_pwm((int)output);
 }
@@ -316,6 +322,12 @@ void motor_A_pid(float target_rpm)
  */
 void motor_B_pid(float target_rpm)
 {
+    if (target_rpm == 0.0f) {
+        pidB.integral = 0.0f;
+        pidB.prev_error = 0.0f;
+        motorB_pwm(0);
+        return;
+    }
     float output = pid_compute(&pidB, target_rpm, (float)motorB_speed_rpm);
     motorB_pwm((int)output);
 }
@@ -325,6 +337,12 @@ void motor_B_pid(float target_rpm)
  */
 void motor_C_pid(float target_rpm)
 {
+    if (target_rpm == 0.0f) {
+        pidC.integral = 0.0f;
+        pidC.prev_error = 0.0f;
+        motorC_pwm(0);
+        return;
+    }
     float output = pid_compute(&pidC, target_rpm, (float)motorC_speed_rpm);
     motorC_pwm((int)output);
 }
@@ -334,6 +352,12 @@ void motor_C_pid(float target_rpm)
  */
 void motor_D_pid(float target_rpm)
 {
+    if (target_rpm == 0.0f) {
+        pidD.integral = 0.0f;
+        pidD.prev_error = 0.0f;
+        motorD_pwm(0);
+        return;
+    }
     float output = pid_compute(&pidD, target_rpm, (float)motorD_speed_rpm);
     motorD_pwm((int)output);
 }

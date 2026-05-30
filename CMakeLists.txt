@@ -49,6 +49,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     OLED/Src/oled.c
     OLED/Src/font.c
     Mecanum/Src/mecanum.c
+    UI/Src/ui.c
 )
 
 # Add include paths
@@ -57,6 +58,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Motor/Inc
     OLED/Inc
     Mecanum/Inc
+    UI/Inc
 )
 
 # Add project symbols (macros)

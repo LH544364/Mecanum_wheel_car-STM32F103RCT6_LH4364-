@@ -29,6 +29,7 @@
 #include "oled.h"
 #include <stdio.h>
 #include "mecanum.h"
+#include "ui.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -72,7 +73,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (htim->Instance == TIM1) {
 
         motor_speed_update();
-        Motion_Control(400.0f, 400.0f, 0);  // 纯前进 400mm/s
+
+        if (ui_motion_active) {
+            Motion_Control(ui_params.Vx, ui_params.Vy, ui_params.w);
+        } else {
+            Motion_Control(0.0f, 0.0f, 0.0f);
+        }
 
     }
 }
@@ -120,6 +126,7 @@ int main(void)
   motor_init();
   HAL_Delay(20);
   OLED_Init();
+  UI_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -129,34 +136,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    char buf[32];
-    uint8_t s1 = HAL_GPIO_ReadPin(S1_GPIO_Port, S1_Pin);
-    uint8_t s2 = HAL_GPIO_ReadPin(S2_GPIO_Port, S2_Pin);
-    uint8_t s3 = HAL_GPIO_ReadPin(S3_GPIO_Port, S3_Pin);
-    uint8_t s4 = HAL_GPIO_ReadPin(S4_GPIO_Port, S4_Pin);
-
-    OLED_NewFrame();
-
-    /* 第1行：循迹传感器 */
-    snprintf(buf, sizeof(buf), "S1:%d S2:%d S3:%d S4:%d",
-             s1 ? 1 : 0, s2 ? 1 : 0, s3 ? 1 : 0, s4 ? 1 : 0);
-    OLED_PrintASCIIString(0, 0, buf, &afont12x6, OLED_COLOR_NORMAL);
-
-    /* 第2行：编码器A/B增量 */
-    snprintf(buf, sizeof(buf), "A:%5d  B:%5d",
-             motorA_encoder_delta, motorB_encoder_delta);
-    OLED_PrintASCIIString(0, 14, buf, &afont12x6, OLED_COLOR_NORMAL);
-
-    /* 第3行：编码器C/D增量 */
-    snprintf(buf, sizeof(buf), "C:%5d  D:%5d",
-             motorC_encoder_delta, motorD_encoder_delta);
-    OLED_PrintASCIIString(0, 28, buf, &afont12x6, OLED_COLOR_NORMAL);
-
-    /* 第4行：D路转速 */
-    snprintf(buf, sizeof(buf), "D RPM:%4d", motorD_speed_rpm);
-    OLED_PrintASCIIString(0, 44, buf, &afont12x6, OLED_COLOR_NORMAL);
-
-    OLED_ShowFrame();
+    UI_Update();
     HAL_Delay(50);
   }
   /* USER CODE END 3 */
