@@ -20,7 +20,7 @@ except ImportError:
     print("请先安装: pip install opencv-python numpy")
     sys.exit(1)
 
-K230_IP = "192.168.137.36"
+K230_IP = "192.168.137.197"
 K230_PORT = 8888
 RECONNECT_DELAY = 2  # 重连间隔（秒）
 
