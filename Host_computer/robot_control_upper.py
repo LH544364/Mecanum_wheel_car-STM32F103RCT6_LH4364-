@@ -137,7 +137,7 @@ COLOR_JOYSTICK_KNOB = QColor(137, 180, 250)
 FONT_FAMILY = "Microsoft YaHei, Segoe UI, sans-serif"
 
 # 控制参数
-DEFAULT_MAX_SPEED = 100      # 绝对速度最大值 (mm/s)
+DEFAULT_MAX_SPEED = 400      # 绝对速度最大值 (mm/s)，通过 RB/LB 解锁调节
 DEFAULT_MAX_W     = 2        # 角速度 w 最大值 (rad/s)
 SPEED_STEP        = 50       # Q/E 每次调整的步长 (mm/s)
 K230_CONTROL_PORT = 8889     # K230 控制指令 UDP 端口
@@ -764,6 +764,8 @@ class MainWindow(QMainWindow):
         # ---- 手柄状态 ----
         self._gp_connected = False
         self._gp_last_pkt = 0
+        self._gp_prev_btns = 0   # 上一帧按键状态，用于防抖
+        self._last_vkey = (0, 0, 0, 0)   # 速度面板上次值
 
         # ---- UDP 控制发送 ----
         self._udp_sock = None
@@ -787,10 +789,11 @@ class MainWindow(QMainWindow):
         # ---- 初始化 UDP ----
         self._init_udp()
 
-        # ---- 定时器：20ms 刷新 (降低控制延迟) ----
+        # ---- 定时器：10ms 高精度刷新 (绕开 Qt 粗粒度时钟) ----
         self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.PreciseTimer)
         self._timer.timeout.connect(self._on_tick)
-        self._timer.start(20)
+        self._timer.start(10)
 
     # ============ UDP 初始化 ============
     def _init_udp(self):
@@ -1166,104 +1169,97 @@ class MainWindow(QMainWindow):
 
     # ============ 定时器刷新 ============
     def _on_tick(self):
-        """每20ms计算 Vx/Vy/w 并发送到 K230（手柄优先，否则摇杆）"""
+        """每20ms合并手柄+键鼠输入，发送 UDP 到 K230"""
         gp = read_gamepad(0)
 
-        if gp and gp['pkt'] != self._gp_last_pkt:
-            # ===== 手柄模式 =====
+        # ---- 手柄连接状态 ----
+        if gp:
             if not self._gp_connected:
                 self._gp_connected = True
-            self._gp_last_pkt = gp['pkt']
-
-            # 左摇杆 → 方向 (Vx, Vy)
-            lx = gp['lx']
-            ly = gp['ly']
-            mag = math.sqrt(lx**2 + ly**2)
-            if mag > 0.01:
-                lx_n = lx / mag
-                ly_n = ly / mag
-            else:
-                lx_n = ly_n = 0.0
-
-            # 右摇杆 X → w（三次曲线：手柄行程短，三次方更细腻）
-            rx = gp['rx']
-            self._w = rx * rx * rx * self._max_w   # x³ 曲线
-
-            # 油门：RT > 5% 用扳机（线性）；否则用左摇杆幅度²
-            if gp['rt'] > 0.05:
-                self._absolute_speed = gp['rt'] * self._max_speed
-            else:
-                self._absolute_speed = mag * mag * self._max_speed  # 二次曲线
-
-            self._vx = self._absolute_speed * lx_n
-            self._vy = self._absolute_speed * ly_n
-
-            # A 键 → 急停
-            if gp['btns'] & XB_A:
-                self._on_stop()
-                self._gp_status_label.setText("GP ✓ STOP")
-                self._gp_status_label.setStyleSheet("color: #f38ba8; font-size: 9px;")
-                return
-
-            # LB/RB → 微调速度
-            if gp['btns'] & XB_RB:
-                self._absolute_speed = min(self._max_speed, self._absolute_speed + SPEED_STEP * 0.2)
-            if gp['btns'] & XB_LB:
-                self._absolute_speed = max(0, self._absolute_speed - SPEED_STEP * 0.2)
-
-            self._update_speed_display()
-
-            # 同步手柄值到画面摇杆
-            self.joystick_dir.set_keyboard_offset(gp['lx'], gp['ly'])
-            self.joystick_turn.set_keyboard_offset(gp['rx'], 0)
-
             self._gp_status_label.setText("GP ✓")
             self._gp_status_label.setStyleSheet("color: #a6e3a1; font-size: 9px;")
-
         else:
-            # ===== 摇杆/键盘模式 =====
             if self._gp_connected:
                 self._gp_connected = False
-                # 手柄断开，复位画面摇杆
                 self.joystick_dir.reset()
                 self.joystick_turn.reset()
+            self._gp_status_label.setText("")
 
-            if gp is None:
-                self._gp_status_label.setText("")
-            else:
-                self._gp_status_label.setText("GP ⏳")
-                self._gp_status_label.setStyleSheet("color: #f9e2af; font-size: 9px;")
+        # ==== 方向 (Vx, Vy)：手柄左摇杆 或 键盘/屏幕摇杆 ====
+        gp_stick_active = gp and (abs(gp['lx']) > 0.05 or abs(gp['ly']) > 0.05)
 
-            # 获取左摇杆（方向）偏移
+        if gp_stick_active:
+            # 手柄左摇杆 → 方向
+            lx, ly = gp['lx'], gp['ly']
+            mag = math.sqrt(lx**2 + ly**2)
+            if mag > 1.0:
+                mag = 1.0  # 对角推杆钳位，防止超速
+            dir_x = lx / mag if mag > 0.01 else 0.0
+            dir_y = ly / mag if mag > 0.01 else 0.0
+            self.joystick_dir.set_keyboard_offset(lx, ly)
+        else:
+            # 手柄归中 → 键鼠方向
+            kb_active = self._key_w or self._key_a or self._key_s or self._key_d
+            if not kb_active:
+                self.joystick_dir.set_keyboard_offset(0, 0)
+            mag = 0.0
             dir_offset = self.joystick_dir.effective_offset()
-
-            # 获取右摇杆（旋转）偏移 → w（二次曲线）
-            turn_offset = self.joystick_turn.effective_offset()
-            x = turn_offset.x()
-            self._w = x * abs(x) * self._max_w
-
-            # 从方向摇杆解算 Vx, Vy
             dir_x = dir_offset.x()
             dir_y = dir_offset.y()
             dir_mag = math.sqrt(dir_x**2 + dir_y**2)
-
             if dir_mag > 0.01:
-                dir_x_norm = dir_x / dir_mag
-                dir_y_norm = dir_y / dir_mag
-            else:
-                dir_x_norm = 0.0
-                dir_y_norm = 0.0
+                dir_x /= dir_mag
+                dir_y /= dir_mag
+                mag = dir_mag
 
-            self._vx = self._absolute_speed * dir_x_norm
-            self._vy = self._absolute_speed * dir_y_norm
+        # 速度：LT 刹车(0) / RT 满油门(200) / RB,LB 锁定值
+        if gp and gp['lt'] > 0.3:
+            ceiling = 0                                      # LT 按深 → 刹车
+        elif gp and gp['rt'] > 0.05:
+            ceiling = self._max_speed                        # RT 按住 → 满油门
+        else:
+            ceiling = self._absolute_speed                   # RB/LB 锁定值
+        speed = mag * mag * ceiling                         # 摇杆深度² × 上限
 
-        # 更新速度指令显示
-        self.velocity_info.update_velocity(self._vx, self._vy, self._w, self._absolute_speed)
+        self._vx = speed * dir_x
+        self._vy = speed * dir_y
+
+        # ==== 旋转 (w)：手柄右摇杆 或 键盘/屏幕摇杆 ====
+        if gp and abs(gp['rx']) > 0.05:
+            rx = gp['rx']
+            self._w = rx * rx * rx * self._max_w   # 三次曲线
+            self.joystick_turn.set_keyboard_offset(rx, 0)
+        else:
+            # 手柄归中 → 清零残留偏移
+            kb_turn = self._key_a or self._key_d
+            if not kb_turn:
+                self.joystick_turn.set_keyboard_offset(0, 0)
+            turn_offset = self.joystick_turn.effective_offset()
+            x = turn_offset.x()
+            self._w = x * abs(x) * self._max_w      # 二次曲线
+
+        # ==== RB/LB 速度上限调节（仅按下瞬间触发，防连发） ====
+        if gp:
+            btns = gp['btns']
+            rising = btns & ~self._gp_prev_btns       # 本帧新按下的按键
+            if rising & XB_RB:
+                self._absolute_speed = min(self._max_speed, self._absolute_speed + SPEED_STEP)
+            if rising & XB_LB:
+                self._absolute_speed = max(0, self._absolute_speed - SPEED_STEP)
+            self._gp_prev_btns = btns
+
+        self._update_speed_display()
+
+        # 仅值变化时刷新速度面板（避免 100Hz 无意义重绘）
+        vkey = (round(self._vx), round(self._vy), round(self._w, 1), round(self._absolute_speed))
+        if vkey != self._last_vkey:
+            self.velocity_info.update_velocity(self._vx, self._vy, self._w, self._absolute_speed)
+            self._last_vkey = vkey
 
         # 发送 UDP 指令到 K230
         self._send_velocity_udp(self._vx, self._vy, self._w)
 
-        # 刷新摇杆
+        # 刷新摇杆（需要 update 驱动 lerp 回正动画）
         self.joystick_dir.update()
         self.joystick_turn.update()
 
