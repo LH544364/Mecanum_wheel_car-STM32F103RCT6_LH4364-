@@ -255,6 +255,7 @@ try:
         if client_sock:
             try:
                 img = sensor_obj.snapshot(chn=CAM_CHN_ID_1)
+                check_udp_control()  # 抓帧后立刻查 UDP，不等压缩
                 jpeg = img.compress(quality=JPEG_QUALITY)
                 jpeg_bytes = jpeg.to_bytes() if hasattr(jpeg, 'to_bytes') else bytes(jpeg)
 
@@ -355,6 +356,9 @@ try:
         # 周期刷新 OSD
         if frame_count % 5 == 0:
             osd_needs_update = True
+
+        # 循环尾再查 UDP（覆盖 TCP 发送+OSD 期间的指令）
+        check_udp_control()
 
 except KeyboardInterrupt as e:
     print("用户停止")
