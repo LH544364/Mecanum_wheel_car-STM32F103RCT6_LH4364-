@@ -138,7 +138,7 @@ FONT_FAMILY = "Microsoft YaHei, Segoe UI, sans-serif"
 
 # 控制参数
 DEFAULT_MAX_SPEED = 400      # 绝对速度最大值 (mm/s)，通过 RB/LB 解锁调节
-DEFAULT_MAX_W     = 2        # 角速度 w 最大值 (rad/s)
+DEFAULT_MAX_W     = 1.5      # 角速度 w 最大值 (rad/s)
 SPEED_STEP        = 50       # Q/E 每次调整的步长 (mm/s)
 K230_CONTROL_PORT = 8889     # K230 控制指令 UDP 端口
 
@@ -751,6 +751,8 @@ class MainWindow(QMainWindow):
         self._key_d = False
         self._key_q = False
         self._key_e = False
+        self._key_left = False   # ← 旋转
+        self._key_right = False  # → 旋转
 
         # ---- 速度状态 ----
         self._absolute_speed = 0.0       # 绝对速度 (0 ~ max_speed)
@@ -785,6 +787,10 @@ class MainWindow(QMainWindow):
         # ---- 构建UI ----
         self._setup_ui()
         self._apply_theme()
+
+        # 安装事件过滤器，防止方向键被输入框截获
+        for inp in (self.ip_input, self.port_input, self.control_port_input):
+            inp.installEventFilter(self)
 
         # ---- 初始化 UDP ----
         self._init_udp()
@@ -1111,6 +1117,14 @@ class MainWindow(QMainWindow):
             self._udp_status_label.setStyleSheet("color: #f38ba8; font-size: 9px;")
 
     # ============ 键盘事件 ============
+    def eventFilter(self, obj, event):
+        """将输入框上的方向键转发到主窗口"""
+        if event.type() == event.KeyPress:
+            if event.key() in (Qt.Key_Left, Qt.Key_Right):
+                self.keyPressEvent(event)
+                return True
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         if key == Qt.Key_W:
@@ -1129,6 +1143,10 @@ class MainWindow(QMainWindow):
             self._key_e = True
             self._absolute_speed = min(self._max_speed, self._absolute_speed + self._speed_step)
             self._update_speed_display()
+        elif key == Qt.Key_Left:
+            self._key_left = True
+        elif key == Qt.Key_Right:
+            self._key_right = True
         elif key == Qt.Key_Space:
             self._on_stop()
         self._sync_keyboard_to_joystick()
@@ -1147,6 +1165,10 @@ class MainWindow(QMainWindow):
             self._key_q = False
         elif key == Qt.Key_E:
             self._key_e = False
+        elif key == Qt.Key_Left:
+            self._key_left = False
+        elif key == Qt.Key_Right:
+            self._key_right = False
         self._sync_keyboard_to_joystick()
 
     def _sync_keyboard_to_joystick(self):
@@ -1166,6 +1188,14 @@ class MainWindow(QMainWindow):
             dx /= mag
             dy /= mag
         self.joystick_dir.set_keyboard_offset(dx, dy)
+
+        # 方向键 → 旋转摇杆
+        tx = 0.0
+        if self._key_left:
+            tx -= 1.0
+        if self._key_right:
+            tx += 1.0
+        self.joystick_turn.set_keyboard_offset(tx, 0)
 
     # ============ 定时器刷新 ============
     def _on_tick(self):
@@ -1231,7 +1261,7 @@ class MainWindow(QMainWindow):
             self.joystick_turn.set_keyboard_offset(rx, 0)
         else:
             # 手柄归中 → 清零残留偏移
-            kb_turn = self._key_a or self._key_d
+            kb_turn = self._key_a or self._key_d or self._key_left or self._key_right
             if not kb_turn:
                 self.joystick_turn.set_keyboard_offset(0, 0)
             turn_offset = self.joystick_turn.effective_offset()
@@ -1287,6 +1317,8 @@ class MainWindow(QMainWindow):
         self._key_d = False
         self._key_q = False
         self._key_e = False
+        self._key_left = False
+        self._key_right = False
 
         # 更新显示
         self.velocity_info.update_velocity(0, 0, 0, 0)
