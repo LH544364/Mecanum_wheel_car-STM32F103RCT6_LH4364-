@@ -67,7 +67,7 @@ else:
 # ========== 参数 ==========
 LCD_W, LCD_H = 800, 480
 STREAM_W, STREAM_H = 240, 180
-JPEG_QUALITY = 15              # 原作者验证的平衡值：清晰度与延迟兼顾
+JPEG_QUALITY = 10              # 稍降画质减小帧体积，提升FPS
 
 sensor_obj = None
 server_sock = None
@@ -203,7 +203,7 @@ try:
         if not udp_sock:
             return
         last_raw = None
-        for _ in range(12):
+        for _ in range(8):   # 3 点分担保量，单次减负
             try:
                 d = udp_sock.recvfrom(128)[0]
                 if d:
@@ -352,10 +352,6 @@ try:
             osd_img.draw_string_advanced(545, 234, 12, "dir", color=(255, 150, 150, 150))
 
             Display.show_image(osd_img, 0, 0, Display.LAYER_OSD1)
-
-        # 周期刷新 OSD
-        if frame_count % 5 == 0:
-            osd_needs_update = True
 
         # 循环尾再查 UDP（覆盖 TCP 发送+OSD 期间的指令）
         check_udp_control()
