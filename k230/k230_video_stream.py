@@ -67,7 +67,7 @@ else:
 # ========== 参数 ==========
 LCD_W, LCD_H = 800, 480
 STREAM_W, STREAM_H = 240, 180
-JPEG_QUALITY = 10              # 降低画质以减小帧体积、加快发送
+JPEG_QUALITY = 15              # 原作者验证的平衡值：清晰度与延迟兼顾
 
 sensor_obj = None
 server_sock = None
@@ -197,35 +197,42 @@ try:
     else:
         print("WiFi 未连接，仅本地显示")
 
-    # ========== UDP 接收函数（多处调用，降低控制延迟） ==========
+    # ========== UDP 接收函数（排空缓冲，取最新指令） ==========
     def check_udp_control():
         global vx_cmd, vy_cmd, w_cmd, cmd_updated, osd_needs_update
         if not udp_sock:
             return
+        last_raw = None
+        for _ in range(12):
+            try:
+                d = udp_sock.recvfrom(128)[0]
+                if d:
+                    last_raw = d
+            except:
+                break
+        if last_raw:
+            _parse_and_forward(last_raw)
+
+    def _parse_and_forward(raw_data):
+        global vx_cmd, vy_cmd, w_cmd, cmd_updated, osd_needs_update
         try:
-            data, addr_from = udp_sock.recvfrom(128)
-            if data:
-                try:
-                    text = data.decode('utf-8').strip()
-                    parts = text.split(',')
-                    if len(parts) == 3:
-                        vx_cmd = float(parts[0])
-                        vy_cmd = float(parts[1])
-                        w_cmd = float(parts[2])
-                        cmd_updated = True
-                        osd_needs_update = True
-                        send_to_stm32(vx_cmd, vy_cmd, w_cmd)
-                except Exception:
-                    pass
-        except Exception as e:
-            if hasattr(e, 'errno') and e.errno != 11:
+            text = raw_data.decode('utf-8').strip()
+            parts = text.split(',')
+            if len(parts) == 3:
+                vx_cmd = float(parts[0])
+                vy_cmd = float(parts[1])
+                w_cmd = float(parts[2])
+                cmd_updated = True
+                osd_needs_update = True
+                send_to_stm32(vx_cmd, vy_cmd, w_cmd)
+        except Exception:
                 pass
 
-    # ========== 主循环（控制优先，图传为后台任务） ==========
+    # ========== 主循环 ==========
     while True:
         os.exitpoint()
 
-        # --- 优先级1: 检查 UDP 控制指令 ---
+        # --- 检查 UDP 控制指令 ---
         check_udp_control()
 
         # --- 接受 TCP 客户端 ---
@@ -244,17 +251,10 @@ try:
                 if hasattr(e, 'errno') and e.errno != 11:
                     pass
 
-        # --- 优先级2: 再次检查 UDP（TCP accept 可能耗时） ---
-        check_udp_control()
-
-        # --- 图传: 抓帧 + 压缩 + 发送（后台任务） ---
+        # --- 图传: 抓帧 + 压缩 + 发送 ---
         if client_sock:
             try:
                 img = sensor_obj.snapshot(chn=CAM_CHN_ID_1)
-
-                # 抓帧后立即再查一次 UDP，避免指令在压缩期间排队
-                check_udp_control()
-
                 jpeg = img.compress(quality=JPEG_QUALITY)
                 jpeg_bytes = jpeg.to_bytes() if hasattr(jpeg, 'to_bytes') else bytes(jpeg)
 
@@ -269,16 +269,9 @@ try:
                         except: pass
                         client_sock = None
                         osd_needs_update = True
-
-                # TCP 发送后最后查一次 UDP
-                check_udp_control()
-
             except Exception as e:
                 if hasattr(e, 'errno') and e.errno != 11:
                     pass
-        else:
-            # 无图传客户端时也保持检查 UDP
-            check_udp_control()
 
         # --- FPS 计算 ---
         now = time.time()
